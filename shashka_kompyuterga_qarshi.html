@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shashka — Kompyuterga qarshi</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:20px;background:linear-gradient(135deg,#101827,#253b55);color:#fff;font-family:Arial,sans-serif;display:flex;justify-content:center;align-items:center}
+.game{width:100%;max-width:560px;text-align:center}
+h1{margin:0;color:#ffd166;font-size:clamp(28px,6vw,38px)}
+.sub{color:#d6e1ee;margin:8px 0 14px}
+.info{font-size:18px;font-weight:bold;min-height:26px;margin:12px 0}
+.board{width:min(90vw,480px);height:min(90vw,480px);margin:auto;display:grid;grid-template-columns:repeat(8,1fr);border:7px solid #c58b49;border-radius:9px;overflow:hidden;box-shadow:0 10px 35px #0008}
+.cell{display:flex;justify-content:center;align-items:center;position:relative}
+.light{background:#f0d9b5}.dark{background:#89552e;cursor:pointer}
+.piece{width:76%;height:76%;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:clamp(15px,4vw,27px);font-weight:bold;box-shadow:inset 0 -5px 0 #0004,0 3px 5px #0006;z-index:1}
+.white{background:radial-gradient(circle at 35% 25%,#fff,#c8c8c8);border:3px solid #999;color:#333}
+.black{background:radial-gradient(circle at 35% 25%,#555,#111);border:3px solid #050505;color:#ffd166}
+.selected{outline:4px solid #ffeb3b;transform:scale(1.08)}
+.target:after{content:"";position:absolute;width:27%;height:27%;border-radius:50%;background:#8cff80;opacity:.95}
+button{margin-top:18px;padding:13px 24px;border:0;border-radius:10px;background:#ffd166;color:#172337;font-size:16px;font-weight:bold;cursor:pointer}
+button:hover{background:#ffbd36}
+.rules{margin:18px auto 0;max-width:460px;color:#d6e1ee;font-size:14px;line-height:1.65}
+</style>
+</head>
+<body>
+<main class="game">
+<h1>♟ SHASHKA ♟</h1>
+<div class="sub">Siz — oq donalar | Kompyuter — qora donalar</div>
+<div class="info" id="status">Sizning navbatingiz</div>
+<div class="board" id="board"></div>
+<button onclick="restart()">🔄 Qayta boshlash</button>
+<div class="rules"><b>Qoidalar:</b><br>
+Oq donalar bilan siz o‘ynaysiz, qora donalarni kompyuter boshqaradi.
+Donani bosing, so‘ng yashil katakni tanlang. Urish mumkin bo‘lsa, urish shart.
+Dama diagonal bo‘ylab uzoq yuradi.
+</div>
+</main>
+<script>
+const SIZE=8, HUMAN='w', AI='b';
+let board, turn, selected, targets, chain, gameOver, thinking;
+
+function initialBoard(){
+ const b=Array.from({length:8},()=>Array(8).fill(null));
+ for(let r=0;r<3;r++)for(let c=0;c<8;c++)if((r+c)%2===1)b[r][c]='b';
+ for(let r=5;r<8;r++)for(let c=0;c<8;c++)if((r+c)%2===1)b[r][c]='w';
+ return b;
+}
+function restart(){
+ board=initialBoard();turn=HUMAN;selected=null;targets=[];chain=false;gameOver=false;thinking=false;render();
+}
+const dirs=[[-1,-1],[-1,1],[1,-1],[1,1]];
+const inside=(r,c)=>r>=0&&r<8&&c>=0&&c<8;
+function getMoves(b,r,c,captureOnly=false){
+ const piece=b[r][c];if(!piece)return[];
+ const color=piece.toLowerCase(),king=piece!==color,moves=[];
+ if(!king){
+  const forward=color==='w'?-1:1;
+  if(!captureOnly)for(const dc of [-1,1]){
+   const nr=r+forward,nc=c+dc;
+   if(inside(nr,nc)&&!b[nr][nc])moves.push({r:nr,c:nc,capture:null});
+  }
+  for(const [dr,dc] of dirs){
+   const mr=r+dr,mc=c+dc,nr=r+2*dr,nc=c+2*dc;
+   if(inside(nr,nc)&&b[mr][mc]&&b[mr][mc].toLowerCase()!==color&&!b[nr][nc])
+    moves.push({r:nr,c:nc,capture:{r:mr,c:mc}});
+  }
+ }else{
+  for(const [dr,dc] of dirs){
+   let nr=r+dr,nc=c+dc,enemy=null;
+   while(inside(nr,nc)){
+    if(!b[nr][nc]){
+     if(enemy)moves.push({r:nr,c:nc,capture:{r:enemy.r,c:enemy.c}});
+     else if(!captureOnly)moves.push({r:nr,c:nc,capture:null});
+    }else{
+     if(b[nr][nc].toLowerCase()===color||enemy)break;
+     enemy={r:nr,c:nc};
+    }
+    nr+=dr;nc+=dc;
+   }
+  }
+ }
+ return moves;
+}
+function allCaptures(b,color){
+ const out=[];
+ for(let r=0;r<8;r++)for(let c=0;c<8;c++)
+  if(b[r][c]&&b[r][c].toLowerCase()===color)
+   for(const m of getMoves(b,r,c,true))out.push({from:{r,c},...m});
+ return out;
+}
+function allMoves(b,color){
+ const caps=allCaptures(b,color);if(caps.length)return caps;
+ const out=[];
+ for(let r=0;r<8;r++)for(let c=0;c<8;c++)
+  if(b[r][c]&&b[r][c].toLowerCase()===color)
+   for(const m of getMoves(b,r,c,false))out.push({from:{r,c},...m});
+ return out;
+}
+function applyMove(b,move){
+ const next=b.map(row=>row.slice()),p=next[move.from.r][move.from.c];
+ next[move.from.r][move.from.c]=null;next[move.r][move.c]=p;
+ if(move.capture)next[move.capture.r][move.capture.c]=null;
+ if(p==='w'&&move.r===0)next[move.r][move.c]='W';
+ if(p==='b'&&move.r===7)next[move.r][move.c]='B';
+ return next;
+}
+function render(){
+ const el=document.getElementById('board');el.innerHTML='';
+ for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+  const cell=document.createElement('div');
+  cell.className='cell '+((r+c)%2?'dark':'light');
+  if(targets.some(t=>t.r===r&&t.c===c))cell.classList.add('target');
+  if(board[r][c]){
+   const p=document.createElement('div');
+   p.className='piece '+(board[r][c].toLowerCase()==='w'?'white':'black');
+   if(board[r][c]!==board[r][c].toLowerCase())p.textContent='♛';
+   if(selected&&selected.r===r&&selected.c===c)p.classList.add('selected');
+   cell.appendChild(p);
+  }
+  cell.onclick=()=>humanClick(r,c);el.appendChild(cell);
+ }
+ const status=document.getElementById('status');
+ if(gameOver)status.textContent=turn===AI?'🎉 Siz g‘olib bo‘ldingiz!':'🤖 Kompyuter g‘olib bo‘ldi!';
+ else if(thinking)status.textContent='🤖 Kompyuter o‘ylayapti...';
+ else status.textContent=chain?'Yana uring!':turn===HUMAN?'Sizning navbatingiz (OQ)':'Kompyuter navbati (QORA)';
+}
+function humanClick(r,c){
+ if(gameOver||thinking||turn!==HUMAN)return;
+ if(selected&&targets.some(t=>t.r===r&&t.c===c)){humanMove(r,c);return;}
+ if(chain)return;
+ if(board[r][c]&&board[r][c].toLowerCase()===HUMAN){
+  const caps=allCaptures(board,HUMAN);
+  if(caps.length&&!caps.some(m=>m.from.r===r&&m.from.c===c))return;
+  selected={r,c};const moves=getMoves(board,r,c);
+  targets=caps.length?moves.filter(m=>m.capture):moves;render();
+ }else{selected=null;targets=[];render();}
+}
+function humanMove(r,c){
+ const m=targets.find(x=>x.r===r&&x.c===c);if(!m)return;
+ board=applyMove(board,{from:selected,...m});
+ selected=null;targets=[];
+ if(m.capture){
+  const more=getMoves(board,r,c,true);
+  if(more.length){selected={r,c};targets=more;chain=true;render();return;}
+ }
+ chain=false;turn=AI;finishOrContinue();if(!gameOver){thinking=true;render();setTimeout(computerTurn,550);}
+}
+function finishOrContinue(){
+ if(allMoves(board,turn).length===0){gameOver=true;render();}
+}
+function evaluate(b){
+ let score=0;
+ for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+  const p=b[r][c];if(!p)continue;
+  const king=p!==p.toLowerCase(),v=king?5:3;
+  score+=(p.toLowerCase()===AI?1:-1)*(v+(king?0:(p==='b'?r:7-r)*0.035));
+ }
+ return score;
+}
+// Kompyuter bir necha yurishni oldindan baholab, eng foydali yurishni tanlaydi.
+function minimax(b,color,depth,alpha,beta){
+ const moves=allMoves(b,color);
+ if(depth===0||moves.length===0)return {score:moves.length===0?(color===AI?-100:100):evaluate(b)};
+ let best=color===AI?-Infinity:Infinity,bestMove=moves[0];
+ for(const m of moves){
+  const nb=applyMove(b,m);
+  let score=minimax(nb,color===AI?HUMAN:AI,depth-1,alpha,beta).score;
+  if(color===AI){if(score>best){best=score;bestMove=m;}alpha=Math.max(alpha,best);}
+  else{if(score<best){best=score;bestMove=m;}beta=Math.min(beta,best);}
+  if(beta<=alpha)break;
+ }
+ return {score:best,move:bestMove};
+}
+function computerTurn(){
+ if(gameOver)return;
+ const result=minimax(board,AI,3,-Infinity,Infinity);
+ if(!result.move){gameOver=true;thinking=false;render();return;}
+ const m=result.move;
+ board=applyMove(board,m);
+ // Kompyuterning ketma-ket urish imkoniyati bo‘lsa, shu dona bilan davom etadi.
+ let r=m.r,c=m.c;
+ while(m.capture){
+  const more=getMoves(board,r,c,true);
+  if(!more.length)break;
+  let best=null,bestScore=-Infinity;
+  for(const x of more){
+   const test=applyMove(board,{from:{r,c},...x});
+   const score=evaluate(test)+(x.capture&&test[x.capture.r][x.capture.c]===null?1:0);
+   if(score>bestScore){bestScore=score;best=x;}
+  }
+  if(!best)break;
+  board=applyMove(board,{from:{r,c},...best});r=best.r;c=best.c;
+ }
+ thinking=false;turn=HUMAN;finishOrContinue();render();
+}
+restart();
+</script>
+</body>
+</html>
